@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graph_server 控制台</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #e3e6ea;
+    --text: #1f2328;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --accent-soft: #eff4ff;
+    --ok: #15803d;
+    --err: #b91c1c;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px; line-height: 1.6;
+  }
+  header {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 14px 22px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .badge {
+    padding: 2px 9px; border-radius: 20px; font-size: 12px;
+    background: var(--accent-soft); color: var(--accent); font-weight: 600;
+  }
+  .layout { display: grid; grid-template-columns: 380px 1fr; gap: 16px; padding: 16px 22px 40px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 13px; margin: 0 0 12px; color: var(--muted); font-weight: 600;
+             text-transform: uppercase; letter-spacing: .04em; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input[type=text], select, textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px;
+    font-size: 13px; font-family: var(--mono); background: #fff; color: var(--text);
+  }
+  textarea { min-height: 150px; resize: vertical; line-height: 1.5; }
+  input:focus, select, textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  button {
+    border: 1px solid var(--border); background: #fff; color: var(--text);
+    padding: 8px 14px; border-radius: 7px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { opacity: .9; color: #fff; }
+  .quick { display: flex; flex-wrap: wrap; gap: 6px; }
+  .quick button { padding: 5px 10px; font-size: 12px; font-family: var(--mono); }
+  pre {
+    margin: 0; padding: 14px; background: #fbfcfd; border: 1px solid var(--border);
+    border-radius: 8px; font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+    white-space: pre-wrap; word-break: break-all; max-height: 60vh; overflow: auto;
+  }
+  .status { font-weight: 600; font-family: var(--mono); }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+  .stat { background: var(--accent-soft); border-radius: 8px; padding: 10px 12px; }
+  .stat .v { font-size: 20px; font-weight: 700; color: var(--accent); font-family: var(--mono); }
+  .stat .k { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>graph_server 控制台</h1>
+  <span class="badge">MiniGraph + HTTP</span>
+  <span class="badge">多图 / 数组 · 对象</span>
+  <span class="sub">通过网络请求对图数据库执行增删查改</span>
+</header>
+
+<div class="layout">
+  <div>
+    <div class="card">
+      <h2>数据库（图）</h2>
+      <div class="row" style="margin-bottom:8px">
+        <select id="graph"></select>
+        <div style="flex:0 0 72px"><button id="refreshGraphs">刷新</button></div>
+      </div>
+      <div class="row" style="margin-bottom:8px">
+        <input type="text" id="newGraph" placeholder="新图名，如 social">
+        <div style="flex:0 0 72px"><button id="createGraph">新建</button></div>
+        <div style="flex:0 0 92px"><button id="deleteGraph">删除当前</button></div>
+      </div>
+      <div class="meta">下列请求都会带上 <code>X-Graph</code> 头，作用于选中的图</div>
+    </div>
+
+    <div class="card">
+      <h2>当前图概况</h2>
+      <div class="stats" id="stats"><div class="stat"><div class="v">-</div><div class="k">加载中</div></div></div>
+    </div>
+
+    <div class="card">
+      <h2>发起请求</h2>
+      <div class="row" style="margin-bottom:10px">
+        <div style="flex:0 0 96px">
+          <label>方法</label>
+          <select id="method">
+            <option>GET</option>
+            <option selected>POST</option>
+            <option>PUT</option>
+            <option>PATCH</option>
+            <option>DELETE</option>
+          </select>
+        </div>
+        <div>
+          <label>路径</label>
+          <input type="text" id="path" value="/api/nodes">
+        </div>
+      </div>
+      <label>请求体（JSON，GET/DELETE 可留空）</label>
+      <textarea id="body">{
+  "labels": ["Person"],
+  "props": {
+    "name": "Alice",
+    "age": 30,
+    "tags": ["vip", "early-bird"],
+    "addr": { "city": "Beijing", "zip": "100000" }
+  }
+}</textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="send">发送请求</button>
+        <button id="clear">清空</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>快捷操作</h2>
+      <div class="quick" id="quick"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>响应</h2>
+    <div class="meta" id="meta">尚无请求</div>
+    <pre id="out">// 点击左侧「发送请求」或任一快捷操作</pre>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+let currentGraph = "";      // 当前操作的图（通过 X-Graph 头传递）
+
+const QUICK = [
+  ["GET",    "/api/graphs",                    "",                                                        "图列表"],
+  ["GET",    "/api/stats",                     "",                                                        "统计"],
+  ["POST",   "/api/nodes",                     '{"labels":["Person"],"props":{"name":"Bob","age":26,"tags":["new"],"addr":{"city":"Shanghai"}}}', "建节点"],
+  ["GET",    "/api/nodes?full=1&limit=20",     "",                                                        "列节点"],
+  ["POST",   "/api/relationships",             '{"from":1,"to":2,"type":"KNOWS","props":{"since":2019}}', "建关系"],
+  ["GET",    "/api/relationships?full=1",      "",                                                        "列关系"],
+  ["POST",   "/api/relationships",             '{"from":1,"to":2,"type":"ROAD","weight":3.5}',            "建带权边"],
+  ["PATCH",  "/api/relationships/1/weight",    '{"weight":2.5}',                                          "改单条边权"],
+  ["POST",   "/api/relationships/weights",     '{"weights":{"1":1.5,"2":2.5}}',                           "批量设权"],
+  ["GET",    "/api/relationships/weight-stats","",                                                        "边权统计"],
+  ["GET",    "/api/relationships?minWeight=2&full=1", "",                                                 "按权重筛选"],
+  ["POST",   "/api/path/weighted",             '{"from":1,"to":3}',                                       "带权最短路"],
+  ["POST",   "/api/query",                     '{"label":"Person","where":{"tags":{"$contains":"vip"}},"full":true}', "含 vip"],
+  ["POST",   "/api/query",                     '{"label":"Person","where":{"age":{"$gte":30}},"full":true}', "age≥30"],
+  ["PATCH",  "/api/nodes/1",                   '{"arrayAppend":{"tags":["gold"]},"objectMerge":{"addr":{"street":"长安街"}}}', "改数组/对象"],
+  ["GET",    "/api/nodes/1/neighbors",         "",                                                        "邻居"],
+  ["GET",    "/api/path?from=1&to=3",          "",                                                        "最短路"],
+  ["POST",   "/api/indexes",                   '{"label":"Person","key":"name"}',                          "建索引"],
+  ["GET",    "/api/indexes",                   "",                                                        "索引列表"],
+  ["POST",   "/api/admin/save",                "",                                                        "落盘"],
+];
+
+// 统一的请求出口：除 /api/graphs 之外的接口都带上 X-Graph 头
+async function api(path, opts = {}) {
+  opts.headers = opts.headers || {};
+  if (path.startsWith("/api/") && !path.startsWith("/api/graphs")) {
+    opts.headers["X-Graph"] = currentGraph;
+  }
+  return fetch(path, opts);
+}
+
+function buildQuick() {
+  const box = $("quick");
+  box.innerHTML = "";
+  for (const [m, p, b, label] of QUICK) {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.title = m + " " + p;
+    btn.onclick = () => { $("method").value = m; $("path").value = p; $("body").value = b; send(); };
+    box.appendChild(btn);
+  }
+}
+
+async function loadGraphs(preferred) {
+  try {
+    const res = await fetch("/api/graphs");
+    const j = await res.json();
+    if (!j.ok) return;
+    const sel = $("graph");
+    sel.innerHTML = "";
+    for (const g of j.data.items) {
+      const opt = document.createElement("option");
+      opt.value = g.name;
+      opt.textContent = g.name + "（节点 " + g.nodes + " / 关系 " + g.relationships + "）";
+      sel.appendChild(opt);
+    }
+    const want = preferred || currentGraph || j.data.defaultGraph;
+    if ([...sel.options].some((o) => o.value === want)) sel.value = want;
+    currentGraph = sel.value;
+    loadStats();
+  } catch (e) { /* 忽略 */ }
+}
+
+async function send() {
+  const method = $("method").value;
+  const path = $("path").value.trim();
+  const raw = $("body").value.trim();
+  const opts = { method, headers: {} };
+  if (raw && method !== "GET" && method !== "DELETE") {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = raw;
+  }
+  $("meta").textContent = method + " " + path + " …";
+  const t0 = performance.now();
+  try {
+    const res = await api(path, opts);
+    const text = await res.text();
+    let pretty = text;
+    try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* 非 JSON 原样输出 */ }
+    $("out").textContent = pretty;
+    const cls = res.ok ? "ok" : "err";
+    $("meta").innerHTML = '<span class="status ' + cls + '">HTTP ' + res.status + '</span> · ' +
+                          method + " " + path + " · " + Math.round(performance.now() - t0) + " ms";
+    if (path.startsWith("/api/graphs")) loadGraphs();
+    else if (path.startsWith("/api/nodes") || path.startsWith("/api/relationships") ||
+             path.startsWith("/api/admin") || path.startsWith("/api/indexes")) loadStats();
+  } catch (e) {
+    $("out").textContent = "请求失败: " + e.message;
+    $("meta").innerHTML = '<span class="status err">ERROR</span> · ' + e.message;
+  }
+}
+
+async function loadStats() {
+  try {
+    const res = await api("/api/stats");
+    const j = await res.json();
+    if (!j.ok) return;
+    const d = j.data;
+    const w = d.weights || {};
+    const avgW = (w.count > 0 && w.avg !== undefined) ? w.avg.toFixed(2) : "-";
+    $("stats").innerHTML =
+      stat(d.nodes, "节点") + stat(d.relationships, "关系") +
+      stat(Object.keys(d.labels || {}).length, "标签") +
+      stat((d.indexes || []).length, "索引") +
+      stat((w.weightedCount || 0) + "/" + (w.count || 0), "已设权边") +
+      stat(avgW, "平均边权");
+  } catch (e) { /* 忽略 */ }
+}
+const stat = (v, k) => '<div class="stat"><div class="v">' + v + '</div><div class="k">' + k + '</div></div>';
+
+$("send").onclick = send;
+$("clear").onclick = () => { $("out").textContent = ""; $("meta").textContent = "已清空"; };
+$("body").addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send();
+});
+
+$("graph").onchange = () => { currentGraph = $("graph").value; loadStats(); };
+$("refreshGraphs").onclick = () => loadGraphs(currentGraph);
+$("createGraph").onclick = async () => {
+  const name = $("newGraph").value.trim();
+  if (!name) { alert("请输入图名"); return; }
+  try {
+    const res = await fetch("/api/graphs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const j = await res.json();
+    $("out").textContent = JSON.stringify(j, null, 2);
+    $("newGraph").value = "";
+    loadGraphs(name);
+  } catch (e) { alert("创建失败: " + e.message); }
+};
+$("deleteGraph").onclick = async () => {
+  const name = currentGraph;
+  if (!confirm("确定删除整张图「" + name + "」？该图的数据文件会被删除。")) return;
+  try {
+    const res = await fetch("/api/graphs/" + encodeURIComponent(name) + "?confirm=1", { method: "DELETE" });
+    const j = await res.json();
+    $("out").textContent = JSON.stringify(j, null, 2);
+    loadGraphs();
+  } catch (e) { alert("删除失败: " + e.message); }
+};
+
+buildQuick();
+loadGraphs();
+</script>
+</body>
+</html>

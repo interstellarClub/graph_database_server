@@ -1,0 +1,13 @@
+# 构建产物
+build/
+bin/
+*.o
+*.a
+
+# 运行时生成的数据文件（data/ 下的示例库保留在仓库中，运行期新增的不入库）
+data/*.tmp
+data/*.mgdb.tmp
+
+# 系统文件
+.DS_Store
+*.swp
