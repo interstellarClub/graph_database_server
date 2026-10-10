@@ -915,6 +915,200 @@ db.list_rels(min_weight=5)                # 按权重筛选
 
 ---
 
+### 7.1 通用脚本客户端 `scripts/graph_client.py`
+
+`scripts/graph_client.py` 是一个**开箱即用的全接口 Python 客户端**，只用标准库
+（`urllib` + `json`），无需 `pip install`。它的设计目标是：
+
+- **连接参数集中在脚本头部**的 `CONFIG` 字典里（IP、端口、图名……），改配置不动函数；
+- **每个函数只收一个字典**，键用 `snake_case`，值就是业务数据；
+- 覆盖服务端**全部 41 个接口**（37 个语义化函数 + `request()` / `call()` 逃生舱）；
+- 返回值已剥掉 `{"ok":..., "data":...}` 信封，直接拿到 `data`；出错抛 `GraphAPIError`。
+
+#### 7.1.1 配置字典（脚本头部）
+
+```python
+CONFIG = {
+    "host": "127.0.0.1",       # 图数据库服务 IP 地址或域名
+    "port": 8080,              # 图数据库服务端口号
+    "graph": "default",        # 默认操作的图（数据库）名
+    "route": "path",           # 图路由方式：path=路径前缀 / header=X-Graph头 / query=?graph=
+    "timeout": 10,             # 单次请求超时秒数
+    "raise_on_error": True,    # 服务端 ok=false 时抛异常；False 则原样返回信封
+    "no_proxy": True,          # 主机是本机地址时自动绕过系统 HTTP 代理
+}
+```
+
+改配置的两种姿势：
+
+```python
+import graph_client as gc            # 或 from scripts import graph_client as gc
+
+gc.configure({"host": "192.168.1.9", "port": 8099, "graph": "social"})  # 全局改
+gc.current_config()                  # 查看当前配置
+
+gc.create_node({"labels": ["Person"], "graph": "warehouse"})            # 单次换图
+```
+
+`host` 也可以直接写完整 URL（`CONFIG["host"] = "https://gdb.example.com"`，此时 `port` 被忽略）。
+`route` 三种方式完全等价，默认 `path`（优先级最高、最不容易被代理/网关改写）：
+
+| route | 实际发出的请求 |
+| --- | --- |
+| `path` | `POST /api/g/social/nodes` |
+| `header` | `POST /api/nodes` + 头 `X-Graph: social` |
+| `query` | `POST /api/nodes?graph=social` |
+
+#### 7.1.2 函数总表
+
+返回值统一是响应里的 `data`。下表括号中是该函数 spec 字典的常用键。
+
+| 分类 | 函数 | HTTP 接口 |
+| --- | --- | --- |
+| **配置** | `configure(overrides)` / `current_config()` | — |
+| **运维** | `health()` | `GET /api/health` |
+| | `manifest()` | `GET /api/manifest` |
+| | `stats()` | `GET /api/stats` |
+| | `save_all()` | `POST /api/admin/save` |
+| | `clear_current({"confirm": True})` | `POST /api/admin/clear` |
+| **图管理** | `list_graphs()` | `GET /api/graphs` |
+| | `create_graph({"name"})` | `POST /api/graphs` |
+| | `graph_info({"name"})` | `GET /api/graphs/{name}` |
+| | `delete_graph({"name", "confirm"})` | `DELETE /api/graphs/{name}` |
+| | `save_graph({"name"})` | `POST /api/graphs/{name}/save` |
+| | `clear_graph({"name", "confirm"})` | `POST /api/graphs/{name}/clear` |
+| **节点** | `create_node({"labels", "props"})` | `POST /api/nodes` |
+| | `list_nodes({"label","key","value","vtype","op","limit","offset","full"})` | `GET /api/nodes` |
+| | `get_node({"id"})` | `GET /api/nodes/{id}` |
+| | `replace_node({"id","labels","props"})` | `PUT /api/nodes/{id}` |
+| | `update_node({"id","props","add_labels","remove_labels","remove_props","array_append","array_remove","object_merge"})` | `PATCH /api/nodes/{id}` |
+| | `delete_node({"id"})` | `DELETE /api/nodes/{id}` |
+| | `neighbors({"id","dir","type","full"})` | `GET /api/nodes/{id}/neighbors` |
+| | `degree({"id","dir","type"})` | `GET /api/nodes/{id}/degree` |
+| | `node_relationships({"id","dir","type","full"})` | `GET /api/nodes/{id}/relationships` |
+| **关系** | `create_relationship({"from","to","type","props","weight"})` | `POST /api/relationships` |
+| | `list_relationships({"type","from","to","dir","min_weight","max_weight","limit","offset","full"})` | `GET /api/relationships` |
+| | `get_relationship({"id"})` | `GET /api/relationships/{id}` |
+| | `replace_relationship({"id","type","props","weight","remove_props"})` | `PUT /api/relationships/{id}` |
+| | `update_relationship({"id","type","props","weight","remove_props","array_append",...})` | `PATCH /api/relationships/{id}` |
+| | `delete_relationship({"id"})` | `DELETE /api/relationships/{id}` |
+| **边权** | `get_weight({"id"})` | `GET /api/relationships/{id}/weight` |
+| | `set_weight({"id","weight"})` | `PATCH /api/relationships/{id}/weight` |
+| | `set_weights({"weights"})` | `POST /api/relationships/weights` |
+| | `weight_stats()` | `GET /api/relationships/weight-stats` |
+| **查询/算法** | `query({"label","where","limit","offset","full"})` | `POST /api/query` |
+| | `reachable({"id","depth","dir","type","full"})` | `GET /api/reachable/{id}` |
+| | `shortest_path({"from","to","dir","type"})` | `GET /api/path` |
+| | `weighted_path({"from","to","weight_key","dir","types"})` | `POST /api/path/weighted` |
+| **索引** | `list_indexes()` | `GET /api/indexes` |
+| | `create_index({"label","key"})` | `POST /api/indexes` |
+| | `drop_index({"label","key"})` | `DELETE /api/indexes` |
+| **逃生舱** | `request(spec)` / `call(spec)` | 任意方法 + 任意路径 |
+
+#### 7.1.3 快速上手
+
+```bash
+./bin/graph_server --dir data &          # 先起服务
+cd scripts && python3 -c "import graph_client"   # 无第三方依赖，可直接 import
+```
+
+```python
+import graph_client as gc
+
+gc.configure({"host": "127.0.0.1", "port": 8080, "graph": "social"})
+gc.create_graph({"name": "social"})                  # 建图（已存在会抛 409）
+
+# ---------- 增 ----------
+alice = gc.create_node({"labels": ["Person"],
+                        "props": {"name": "Alice", "age": 30,
+                                  "tags": ["vip"], "addr": {"city": "北京"}}})["id"]
+bob = gc.create_node({"labels": ["Person"], "props": {"name": "Bob", "age": 26}})["id"]
+gc.create_relationship({"from": alice, "to": bob, "type": "KNOWS",
+                        "props": {"since": 2019}, "weight": 2.5})["id"]
+
+# ---------- 查 ----------
+gc.get_node({"id": alice})                                        # 单个
+gc.list_nodes({"label": "Person", "limit": 20})                   # 列表
+gc.list_nodes({"key": "name", "value": "Alice"})                  # 属性过滤
+gc.query({"label": "Person", "where": {"age": {"$gte": 30}}})     # 条件查询
+gc.query({"where": {"tags": {"$contains": "vip"}}})               # 数组包含
+gc.neighbors({"id": alice, "dir": "both"})                        # 邻居（data["neighbors"]）
+gc.degree({"id": alice})                                          # 度数
+gc.reachable({"id": alice, "depth": 2})                           # 2 跳可达（data["nodes"]）
+gc.shortest_path({"from": alice, "to": bob})                      # 无权最短路
+gc.weighted_path({"from": alice, "to": bob, "types": ["KNOWS"]})  # 带权最短路
+
+# ---------- 改 ----------
+gc.update_node({"id": alice, "props": {"age": 31},               # 增量（合并）
+                "add_labels": ["Manager"],
+                "array_append": {"tags": ["gold"]},              # 数组追加（自动去重）
+                "object_merge": {"addr": {"street": "长安街"}}})  # 对象浅合并
+gc.replace_node({"id": bob, "labels": ["Person"],                # 整体替换
+                 "props": {"name": "Bob", "age": 27}})
+
+# ---------- 删 ----------
+gc.delete_relationship({"id": 1})
+gc.delete_node({"id": bob})      # 级联删除其所有关系
+gc.save_all()                    # 全部图落盘
+```
+
+#### 7.1.4 边权用法
+
+```python
+r = gc.create_relationship({"from": 1, "to": 2, "type": "ROAD",
+                            "props": {"name": "京沪线"}, "weight": 5.0})["id"]
+gc.get_weight({"id": r})                          # -> {"id": 1, "weight": 5.0}
+gc.set_weight({"id": r, "weight": 2.5})           # 单条改权
+gc.set_weights({"weights": {1: 0.5, 2: 3.0}})     # 批量：字典写法（键会转成 "1"/"2"）
+gc.set_weights({"weights": [[3, 1.2], [4, 9]]})   # 批量：数组写法
+gc.weight_stats()                                 # 统计 count/sum/min/max/avg
+gc.list_relationships({"min_weight": 5})          # 按权重区间筛选
+gc.weighted_path({"from": 1, "to": 4, "types": ["ROAD"]})   # 带权最短路
+```
+
+> `weighted_path` 记得传 `types`：同一对节点之间若还有没设权的边（权重默认 `1.0`），
+> Dijkstra 会优先走那条更"便宜"的边，结果看起来就像边权没生效。
+
+#### 7.1.5 错误处理
+
+默认 `raise_on_error=True`，服务端 `ok=false` 时抛 `GraphAPIError`：
+
+```python
+from graph_client import GraphAPIError
+
+try:
+    gc.get_node({"id": 999999})
+except GraphAPIError as e:
+    print(e.code, e.status, e)     # not_found 404 节点不存在: 999999 | ...
+```
+
+想要"不抛异常、自己检查"：
+
+```python
+gc.configure({"raise_on_error": False})
+env = gc.get_node({"id": 999999})      # 返回完整信封
+if not env.get("ok"):
+    print(env["error"]["code"], env["error"]["message"])
+```
+
+连不上服务时同样抛 `GraphAPIError`（`code="connection_error"`）。
+
+#### 7.1.6 命令行自检
+
+```bash
+python3 scripts/graph_client.py            # 端到端跑一遍全部接口（需服务已启动）
+python3 scripts/graph_client.py --check    # 只做健康检查 + 列出图
+```
+
+自检脚本会在 `data` 目录下建一张 `py_client_demo` 图，依次演示
+建图 / 清空 / 建节点 / 建带权关系 / 各类查询与遍历 / 最短路 / 增量与整体修改 /
+边权读写与批量设权 / 索引增删 / 删除与级联 / 统计落盘 / 错误捕获，最后删掉该图。
+
+> 脚本默认连 `127.0.0.1:8080` 的 `default` 图；
+> 换机器或换端口请改脚本头部 `CONFIG`，或 `import` 后调 `configure()`。
+
+---
+
 ## 八、设计要点
 
 1. **三层单向依赖**：`graph_server` → `http` / `minigraph`；**没有反向依赖**。
